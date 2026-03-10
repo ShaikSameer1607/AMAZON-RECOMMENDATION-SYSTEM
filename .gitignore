@@ -1,0 +1,75 @@
+# Amazon Recommendation System - Git Ignore File
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# PyCharm
+.iml
+.idea/workspace.xml
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific outputs (keep these in HDFS, not git)
+outputs/eda_results/*.csv
+outputs/models/*
+outputs/recommendation_results/*
+outputs/visualization/*.png
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Test coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Documentation builds
+docs/_build/
+
+# Environment variables
+.env
+.env.local

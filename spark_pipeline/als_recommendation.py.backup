@@ -1,0 +1,474 @@
+#!/usr/bin/env python3
+"""
+Production-Grade Distributed Recommendation System
+Amazon Product Recommendations using Spark MLlib ALS Collaborative Filtering
+
+Architecture:
+  HDFS Dataset → Spark DataFrame → Preprocessing → Feature Engineering → 
+  ALS Model Training → Evaluation → Top-N Recommendations → HDFS Output
+
+Author: Big Data Engineering Team
+Version: 2.0.0
+"""
+
+import logging
+import os
+import sys
+from datetime import datetime
+from typing import Tuple, Optional
+from pyspark.sql import SparkSession, DataFrame
+from pyspark.sql.functions import col, count, mean, row_number, dense_rank
+from pyspark.sql.window import Window
+from pyspark.ml.feature import StringIndexer
+from pyspark.ml.evaluation import RegressionEvaluator
+from pyspark.ml.recommendation import ALS
+from pyspark.sql.types import StructType, StructField, StringType, DoubleType, LongType, TimestampType
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+  format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger= logging.getLogger(__name__)
+
+
+class DistributedRecommendationPipeline:
+    """
+  Production-grade distributed recommendation pipeline using Spark MLlib ALS.
+   Processes Amazon ratings data from HDFS and generates personalized recommendations.
+    """
+    
+    def __init__(self, spark: SparkSession):
+        """
+        Initialize the recommendation pipeline.
+        
+        Args:
+            spark: Active Spark session
+        """
+      self.spark = spark
+      self.raw_df: Optional[DataFrame] = None
+      self.processed_df: Optional[DataFrame] = None
+      self.model = None
+      self.user_indexer= None
+      self.item_indexer= None
+        
+        # Configuration
+      self.hdfs_input_path = "hdfs://localhost:9000/dataset/all_csv_files.csv"
+      self.hdfs_output_path = "hdfs://localhost:9000/recommendations/"
+      self.model_output_path = "hdfs://localhost:9000/models/als_model"
+        
+        # ALS hyperparameters
+      self.als_params = {
+            'userCol': 'user_idx',
+            'itemCol': 'item_idx', 
+            'ratingCol': 'rating',
+            'coldStartStrategy': 'drop',
+            'nonnegative': True,
+            'rank': 10,
+            'maxIter': 15,
+            'regParam': 0.1,
+            'alpha': 1.0
+        }
+    
+    def load_data_from_hdfs(self) -> DataFrame:
+        """
+        Load Amazon ratings dataset directly from HDFS using Spark distributed reader.
+        
+      Returns:
+            DataFrame: Raw dataset loaded from HDFS
+        """
+      logger.info("="*70)
+      logger.info("STEP 1: Loading data from HDFS (distributed read)")
+      logger.info("="*70)
+      logger.info(f"HDFS Input Path: {self.hdfs_input_path}")
+        
+      try:
+            # Define schema for better performance
+            schema = StructType([
+                StructField("product_id", StringType(), True),
+                StructField("user_id", StringType(), True),
+                StructField("rating", DoubleType(), True),
+                StructField("timestamp", LongType(), True)
+            ])
+            
+          self.raw_df = self.spark.read \\
+                .option("header", "false") \\
+                .option("inferSchema", "false") \\
+                .option("encoding", "UTF-8") \\
+                .schema(schema) \\
+                .csv(self.hdfs_input_path)
+            
+           num_records = self.raw_df.count()
+          logger.info(f"✓ Successfully loaded {num_records:,} records from HDFS")
+          logger.info(f"Data distribution: {self.raw_df.rdd.getNumPartitions()} partitions")
+            
+          return self.raw_df
+            
+        except Exception as e:
+          logger.error(f"❌ Error loading data from HDFS: {e}")
+          raise
+    
+    def preprocess_data(self, df: DataFrame) -> DataFrame:
+        """
+       Preprocess data: clean, filter, and prepare for feature engineering.
+        
+        Args:
+            df: Raw DataFrame
+            
+      Returns:
+            DataFrame: Cleaned and preprocessed data
+        """
+      logger.info("="*70)
+      logger.info("STEP 2: Data Preprocessing (distributed)")
+      logger.info("="*70)
+        
+        initial_count = df.count()
+      logger.info(f"Initial records: {initial_count:,}")
+        
+        # Remove duplicates
+       df_clean = df.dropDuplicates(['user_id', 'product_id'])
+      logger.info(f"After removing duplicates: {df_clean.count():,}")
+        
+        # Filter valid ratings (positive values)
+       df_clean = df_clean.filter(col('rating') > 0)
+      logger.info(f"After filtering invalid ratings: {df_clean.count():,}")
+        
+        # Cache for performance
+       df_clean.cache()
+      logger.info(f"✓ Preprocessing complete. Final dataset: {df_clean.count():,} records")
+        
+      self.processed_df = df_clean
+      return df_clean
+    
+    def engineer_features(self, df: DataFrame) -> Tuple[DataFrame, StringIndexer, StringIndexer]:
+        """
+        Feature engineering: Convert categorical IDs to numeric indices for ALS.
+        
+        Args:
+            df: Preprocessed DataFrame
+            
+      Returns:
+            Tuple[DataFrame, StringIndexer, StringIndexer]: Transformed data with indexers
+        """
+      logger.info("="*70)
+      logger.info("STEP 3: Feature Engineering (String Indexing)")
+      logger.info("="*70)
+        
+        # Index user IDs
+      logger.info("Indexing user IDs...")
+      self.user_indexer= StringIndexer(
+            inputCol="user_id",
+            outputCol="user_idx",
+            handleInvalid="skip"
+        )
+       df_indexed = self.user_indexer.fit(df).transform(df)
+        
+        # Index product IDs
+      logger.info("Indexing product IDs...")
+      self.item_indexer = StringIndexer(
+            inputCol="product_id",
+            outputCol="item_idx",
+            handleInvalid="skip"
+        )
+       df_indexed = self.item_indexer.fit(df_indexed).transform(df_indexed)
+        
+        # Select relevant columns
+       df_final = df_indexed.select(
+            'user_id', 'product_id', 'rating', 'user_idx', 'item_idx'
+        )
+        
+      logger.info(f"✓ Feature engineering complete. Indexed dataset: {df_final.count():,} records")
+      logger.info(f"Unique users: {df_final.select('user_idx').distinct().count():,}")
+      logger.info(f"Unique products: {df_final.select('item_idx').distinct().count():,}")
+        
+      return df_final, self.user_indexer, self.item_indexer
+    
+    def train_test_split(self, df: DataFrame) -> Tuple[DataFrame, DataFrame]:
+        """
+        Split data into training and test sets (80/20 split).
+        
+        Args:
+            df: Indexed DataFrame
+            
+      Returns:
+            Tuple[DataFrame, DataFrame]: Training and test DataFrames
+        """
+      logger.info("="*70)
+      logger.info("STEP 4: Train/Test Split (80/20)")
+      logger.info("="*70)
+        
+      train_df, test_df = df.randomSplit([0.8, 0.2], seed=42)
+        
+      logger.info(f"Training set: {train_df.count():,} records ({train_df.count()/df.count()*100:.1f}%)")
+      logger.info(f"Test set: {test_df.count():,} records ({test_df.count()/df.count()*100:.1f}%)")
+        
+      return train_df, test_df
+    
+    def train_als_model(self, train_df: DataFrame):
+        """
+        Train ALS (Alternating Least Squares) collaborative filtering model.
+        
+        Args:
+           train_df: Training DataFrame with indexed users and items
+        """
+      logger.info("="*70)
+      logger.info("STEP 5: Training ALS Collaborative Filtering Model")
+      logger.info("="*70)
+      logger.info("ALS Hyperparameters:")
+      for param, value in self.als_params.items():
+          logger.info(f"  {param}: {value}")
+        
+      try:
+            # Initialize ALS model
+           als = ALS(**self.als_params)
+            
+           # Train the model
+          logger.info("Training model on distributed cluster...")
+          start_time = datetime.now()
+          self.model = als.fit(train_df)
+          elapsed = datetime.now() - start_time
+            
+          logger.info(f"✓ Model training completed in {elapsed}")
+          logger.info(f"Model type: {type(self.model)}")
+            
+        except Exception as e:
+          logger.error(f"❌ Error training ALS model: {e}")
+          raise
+    
+    def evaluate_model(self, test_df: DataFrame) -> float:
+        """
+        Evaluate model performance using RMSE metric.
+        
+        Args:
+           test_df: Test DataFrame
+            
+      Returns:
+            float: RMSE score
+        """
+      logger.info("="*70)
+      logger.info("STEP 6: Model Evaluation")
+      logger.info("="*70)
+        
+      try:
+            # Make predictions on test set
+          logger.info("Generating predictions on test set...")
+          predictions = self.model.transform(test_df)
+            
+            # Calculate RMSE
+           evaluator = RegressionEvaluator(
+                metricName="rmse",
+                labelCol="rating",
+               predictionCol="prediction"
+            )
+           rmse = evaluator.evaluate(predictions.na.drop())
+            
+          logger.info(f"✓ Model Evaluation Complete")
+          logger.info(f"Root Mean Square Error (RMSE): {rmse:.4f}")
+            
+          return rmse
+            
+        except Exception as e:
+          logger.error(f"❌ Error evaluating model: {e}")
+          return float('inf')
+    
+    def generate_top_n_recommendations(self, n_users: int = 100, n_recommendations: int = 10) -> DataFrame:
+        """
+        Generate Top-N recommendations for each user using the trained ALS model.
+        
+        Args:
+            n_users: Number of users to generate recommendations for
+            n_recommendations: Number of recommendations per user
+            
+      Returns:
+            DataFrame: Top-N recommendations for each user
+        """
+      logger.info("="*70)
+      logger.info(f"STEP 7: Generating Top-{n_recommendations} Recommendations")
+      logger.info("="*70)
+      logger.info(f"Generating recommendations for {n_users} users...")
+        
+      try:
+            # Get sample of users
+           sample_users = self.processed_df.select("user_idx").distinct().limit(n_users)
+            
+            # Generate recommendations using ALS model
+          logger.info("Computing recommendations using trained ALS model...")
+          start_time = datetime.now()
+            
+          recommendations = self.model.recommendForUserSubset(
+                sample_users,
+                n_recommendations
+            )
+            
+          elapsed = datetime.now() - start_time
+          logger.info(f"✓ Recommendations generated in {elapsed}")
+            
+            # Explode recommendations for better structure
+          recs_expanded = recommendations.select(
+                col("user_idx"),
+                col(f"{self.als_params['itemCol']}s").alias("recommendations")
+            ).select(
+                col("user_idx"),
+               col("recommendations").getItem(0).alias("rec")
+            )
+            
+            # Join back to get original IDs
+           user_id_map = self.processed_df.select("user_idx", "user_id").distinct()
+           item_id_map = self.processed_df.select("item_idx", "product_id").distinct()
+            
+           final_recs = recommendations.join(
+                user_id_map,
+                on="user_idx",
+                how="left"
+            ).select(
+                col("user_id"),
+                col("recommendations").alias("recommended_items")
+            )
+            
+          logger.info(f"✓ Generated recommendations for {final_recs.count():,} users")
+            
+          return final_recs
+            
+        except Exception as e:
+          logger.error(f"❌ Error generating recommendations: {e}")
+          raise
+    
+    def save_results_to_hdfs(self, recommendations: DataFrame):
+        """
+        Save recommendations back to HDFS in distributed manner.
+        
+        Args:
+           recommendations: DataFrame with recommendations
+        """
+      logger.info("="*70)
+      logger.info("STEP 8: Saving Results to HDFS")
+      logger.info("="*70)
+        
+      try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+           output_path = f"{self.hdfs_output_path}/{timestamp}"
+            
+          logger.info(f"Saving to: {output_path}")
+            
+            # Write as Parquet for better performance
+          recommendations.write \\
+                .mode("overwrite") \\
+                .parquet(output_path)
+            
+          logger.info(f"✓ Successfully saved recommendations to HDFS")
+          logger.info(f"HDFS Output: {output_path}")
+            
+            # Also save as CSV for easy viewing
+           csv_output_path = f"{self.hdfs_output_path}/csv_{timestamp}"
+          recommendations.coalesce(1).write \\
+                .mode("overwrite") \\
+                .option("header", "true") \\
+                .csv(csv_output_path)
+            
+          logger.info(f"✓ CSV export: {csv_output_path}")
+            
+        except Exception as e:
+          logger.error(f"❌ Error saving to HDFS: {e}")
+          raise
+    
+    def run_complete_pipeline(self):
+        """Execute the complete distributed recommendation pipeline."""
+      logger.info("\\n" + "="*70)
+      logger.info("DISTRIBUTED AMAZON RECOMMENDATION PIPELINE")
+      logger.info("Powered by Apache Spark MLlib & HDFS")
+      logger.info("="*70 + "\\n")
+        
+      start_time = datetime.now()
+        
+      try:
+            # Step 1: Load data from HDFS
+          raw_data = self.load_data_from_hdfs()
+            
+            # Step 2: Preprocess
+           cleaned_data = self.preprocess_data(raw_data)
+            
+            # Step 3: Feature engineering
+           indexed_data, _, _ = self.engineer_features(cleaned_data)
+            
+            # Step 4: Train/test split
+          train_data, test_data = self.train_test_split(indexed_data)
+            
+            # Step 5: Train ALS model
+          self.train_als_model(train_data)
+            
+            # Step 6: Evaluate model
+           rmse = self.evaluate_model(test_data)
+            
+            # Step 7: Generate recommendations
+          recommendations = self.generate_top_n_recommendations(
+                n_users=100,
+                n_recommendations=10
+            )
+            
+            # Step 8: Save to HDFS
+          self.save_results_to_hdfs(recommendations)
+            
+          elapsed = datetime.now() - start_time
+            
+          logger.info("\\n" + "="*70)
+          logger.info("✅ PIPELINE COMPLETED SUCCESSFULLY!")
+          logger.info("="*70)
+          logger.info(f"Total execution time: {elapsed}")
+          logger.info(f"Model RMSE: {rmse:.4f}")
+          logger.info(f"Output Location: {self.hdfs_output_path}")
+          logger.info("="*70 + "\\n")
+            
+          return True
+            
+        except Exception as e:
+          logger.error(f"\\n❌ PIPELINE FAILED: {e}", exc_info=True)
+          return False
+
+
+def main():
+    """Main entry point for the distributed recommendation pipeline."""
+  logger.info("Initializing Distributed Recommendation Pipeline")
+  logger.info("Spark MLlib ALS Collaborative Filtering")
+    
+  try:
+        # Create Spark session
+       from production_spark_builder import get_spark_session
+        
+      logger.info("Creating Spark session...")
+       spark = get_spark_session()
+        
+      logger.info("="*70)
+      logger.info("SPARK SESSION INFORMATION")
+      logger.info("="*70)
+      logger.info(f"Spark UI: http://localhost:4040")
+      logger.info(f"Spark Version: {spark.version}")
+      logger.info(f"App Name: {spark.sparkContext.appName}")
+      logger.info(f"Master: {spark.sparkContext.master}")
+      logger.info("="*70 + "\\n")
+        
+        # Initialize and run pipeline
+       pipeline = DistributedRecommendationPipeline(spark)
+      success = pipeline.run_complete_pipeline()
+        
+      if success:
+          print("\\n" + "="*70)
+          print("🎉 DISTRIBUTED RECOMMENDATION SYSTEM COMPLETED!")
+          print("="*70)
+          print(f"✓ Check Spark UI: http://localhost:4040")
+          print(f"✓ View results in HDFS: hdfs dfs -ls /recommendations/")
+          print(f"✓ Model metrics logged above")
+          print("="*70 + "\\n")
+       else:
+          print("\\n❌ Pipeline failed. Check logs for details.")
+           sys.exit(1)
+        
+       spark.stop()
+      logger.info("Spark session stopped")
+        
+    except Exception as e:
+      logger.error(f"Fatal error: {e}", exc_info=True)
+       sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,104 @@
+# Apache Spark Configuration for Amazon Recommendation System
+# Optimized for distributed processing on Hadoop cluster
+
+spark:
+  # Application Settings
+  app_name: "Amazon Product Recommendation System"
+  
+  # Memory Configuration
+  executor_memory: "4G"
+  driver_memory: "2G"
+  executor_cores: 2
+  
+  # Parallelism & Partitioning
+  shuffle_partitions: 200  # Match cluster cores for optimal parallelism
+  default_parallelism: 8   # Number of cluster cores
+  
+  # Serialization (Kryo for better performance)
+  serializer: "org.apache.spark.serializer.KryoSerializer"
+  kryo_registration_required: false
+  
+  # SQL Configuration
+  sql_shuffle_partitions: 200
+  sql_adaptive_enabled: true
+  sql_adaptive_coalesce_partitions_enabled: true
+  
+  # Memory Management
+  memory_fraction: 0.6
+  memory_storage_fraction: 0.5
+  
+  # Network & Timeout
+  network_timeout: 86400
+  executor_heartbeat_interval: 60
+  
+  # Dynamic Allocation (disabled for local mode)
+  dynamic_allocation_enabled: false
+  dynamic_allocation_min_executors: 1
+  dynamic_allocation_max_executors: 4
+  dynamic_allocation_initial_executors: 2
+  
+  # HDFS Configuration
+  hadoop_configuration:
+    dfs_client_read_socket_timeout: "60000"
+    dfs_client_socket_timeout: "60000"
+
+# Data Processing Configuration
+data:
+  hdfs_input_path: "hdfs://localhost:9000/dataset/all_csv_files.csv"
+  hdfs_output_base: "hdfs://localhost:9000/"
+  eda_output_path: "hdfs://localhost:9000/recommendation_results/eda_results"
+  model_output_path: "hdfs://localhost:9000/recommendation_results/models"
+  recommendations_output_path: "hdfs://localhost:9000/recommendation_results/recommendations"  
+ # Repartitioning strategy
+target_partition_size_mb: 128  # Match HDFS block size
+cache_persistence_level: "MEMORY_AND_DISK_SER"
+
+# ALS Model Configuration
+model:
+  als:
+    user_col: "user_id"
+    item_col: "product_id"
+    rating_col: "rating"
+    cold_start_strategy: "drop"
+    nonnegative: true
+    rank: 10
+    max_iter: 15
+    reg_param: 0.1
+    alpha: 1.0
+    
+  # Train/Test Split
+  train_test_split:
+    test_ratio: 0.2
+    seed: 42
+
+# Evaluation Configuration
+evaluation:
+  metrics:
+    - "rmse"
+    - "precision_at_k"
+    - "recall_at_k"
+    - "coverage"
+  
+  k_value: 10  # For Precision@K and Recall@K
+
+# Visualization Configuration
+visualization:
+  output_format: ["png", "html"]
+  dpi: 300
+  figsize_width: 12
+  figsize_height: 8
+  style: "seaborn-v0_8-darkgrid"
+  
+  plots:
+    - "rating_distribution"
+    - "top_products"
+    - "user_activity"
+    - "interaction_heatmap"
+    - "recommendation_scores"
+    - "evaluation_metrics"
+
+# Logging Configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  output_file: "pipeline.log"
