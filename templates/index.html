@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Amazon Recommendation AI | Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        tailwind.config = { 
+            darkMode: 'class', 
+            theme: { extend: { colors: { amazon: { DEFAULT: '#232f3e', orange: '#febd69', light: '#37475a' } } } } 
+        }
+    </script>
+    <style>
+        .spinner { border: 4px solid rgba(255,255,255,0.1); border-top: 4px solid #febd69; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .fade-out { opacity: 0; pointer-events: none; transition: opacity 0.5s ease-out; }
+        #cartSidebar { transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1); transform: translateX(100%); }
+        #cartSidebar.open { transform: translateX(0); }
+        .toast-msg { position: fixed; bottom: 20px; right: 20px; background: #febd69; color: #131921; padding: 12px 20px; border-radius: 8px; font-weight: 900; font-size: 11px; text-transform: uppercase; z-index: 100; animation: slideIn 0.3s ease-out; }
+        @keyframes slideIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
+        #insightBar { transition: width 1.5s cubic-bezier(0.65, 0, 0.35, 1); }
+    </style>
+</head>
+
+<body class="bg-gray-900 text-gray-100 min-h-screen flex flex-col font-sans overflow-x-hidden">
+    
+    <div id="loader" class="fixed inset-0 bg-[#131921] z-50 flex flex-col items-center justify-center">
+        <div class="spinner mb-4"></div>
+        <h2 class="text-white text-lg font-bold tracking-widest uppercase animate-pulse">Syncing Amazon Recommendation AI...</h2>
+    </div>
+
+    <nav class="bg-amazon text-white sticky top-0 z-40 shadow-2xl border-b border-gray-700">
+        <div class="max-w-screen-2xl mx-auto px-4 py-3 flex justify-between items-center gap-4">
+            <h1 class="text-2xl font-black text-amazon-orange tracking-tighter uppercase">📦 Amazon Recommendation AI</h1>
+            <div class="flex-grow max-w-xl flex bg-gray-800 rounded-lg overflow-hidden border border-gray-600">
+                <select id="searchCategory" onchange="applyFilters()" class="p-2 bg-gray-700 text-[10px] font-black outline-none border-r border-gray-600 uppercase cursor-pointer">
+                    <option value="All">All Categories</option>
+                    <option value="Electronics">Electronics</option>
+                    <option value="Home">Home</option>
+                </select>
+                <input id="search" type="text" oninput="applyFilters()" placeholder="Search Amazon catalog..." class="w-full p-2 bg-gray-800 text-sm outline-none">
+            </div>
+            <div class="flex items-center gap-6">
+                <div onclick="toggleCart()" class="relative cursor-pointer group">
+                    <span class="text-2xl">🛒</span>
+                    <span id="cartBadge" class="absolute -top-1 -right-2 bg-amazon-orange text-black text-[10px] font-black px-1.5 py-0.5 rounded-full">0</span>
+                </div>
+                <div class="text-right">
+                    <p class="text-[9px] text-gray-400 uppercase font-black">Active User</p>
+                    <select id="userSelect" onchange="updateView()" class="bg-transparent text-amazon-orange font-bold text-sm outline-none cursor-pointer"></select>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <div id="cartSidebar" class="fixed top-0 right-0 h-full w-80 bg-gray-800 shadow-2xl z-50 flex flex-col border-l border-gray-700">
+        <div class="p-6 bg-amazon flex justify-between items-center border-b border-gray-700">
+            <h2 class="text-lg font-black uppercase text-amazon-orange">Amazon Basket</h2>
+            <button onclick="toggleCart()" class="text-gray-400 hover:text-white text-xl">✕</button>
+        </div>
+        <div id="cartItemsList" class="flex-grow overflow-y-auto p-4 space-y-3">
+            <p class="text-gray-500 text-center mt-10 text-xs uppercase font-bold italic">Cart is empty</p>
+        </div>
+        <div class="p-6 border-t border-gray-700 bg-gray-900/50">
+            <div class="flex justify-between items-center mb-4">
+                <span class="text-xs font-black uppercase text-gray-400">Total</span>
+                <span id="cartTotal" class="text-xl font-black text-amazon-orange">₹0</span>
+            </div>
+            <button class="w-full bg-amazon-orange text-black py-3 rounded-lg font-black uppercase text-xs hover:bg-yellow-500 transition">Proceed to Checkout</button>
+        </div>
+    </div>
+
+    <main class="max-w-screen-2xl mx-auto px-4 py-6 w-full flex-grow flex flex-col gap-6">
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div class="bg-gray-800 p-4 rounded-xl border border-gray-700 text-center">
+                <p class="text-gray-400 text-[10px] font-black uppercase">Core Engine</p>
+                <p class="text-lg font-bold text-blue-400 italic">Spark ALS CF</p>
+            </div>
+            <div class="bg-gray-800 p-4 rounded-xl border border-gray-700 text-center">
+                <p class="text-gray-400 text-[10px] font-black uppercase">User Base</p>
+                <span id="statUsers" class="text-2xl font-black">0</span>
+            </div>
+            <div class="bg-gray-800 p-4 rounded-xl border border-gray-700 text-center">
+                <p class="text-gray-400 text-[10px] font-black uppercase">Catalog Size</p>
+                <span id="statProducts" class="text-2xl font-black">0</span>
+            </div>
+            <div class="bg-gray-800 p-4 rounded-xl border border-gray-700 text-center">
+                <p class="text-gray-400 text-[10px] font-black uppercase">Avg Match Score</p>
+                <span id="statAvgRating" class="text-2xl font-black text-green-400">0</span>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div class="bg-gray-800 p-5 rounded-xl border border-gray-700 flex flex-col justify-center">
+                <h3 class="font-bold uppercase text-[10px] text-amazon-orange mb-4">Amazon Prediction Confidence</h3>
+                <div class="w-full bg-gray-700 rounded-full h-3 overflow-hidden relative">
+                    <div id="insightBar" class="bg-green-500 h-full rounded-full w-0"></div>
+                </div>
+                <p id="insightAvg" class="text-right text-xs font-black text-green-400 mt-2">0</p>
+            </div>
+            <div class="bg-gray-800 p-5 rounded-xl border border-gray-700 h-48"><canvas id="categoryChart"></canvas></div>
+            <div class="bg-gray-800 p-5 rounded-xl border border-gray-700 h-48"><canvas id="priceChart"></canvas></div>
+        </div>
+
+        <div class="border-t border-gray-800 pt-8">
+            <div class="flex justify-between items-end mb-8">
+                <div>
+                    <h2 class="text-2xl font-black italic tracking-tighter uppercase text-white">Recommended for you</h2>
+                    <p class="text-[9px] text-gray-500 font-bold uppercase">Personalized via Matrix Factorization</p>
+                </div>
+                <select id="sortGrid" onchange="applyFilters()" class="bg-gray-800 border border-gray-700 p-2 rounded text-xs font-bold outline-none cursor-pointer">
+                    <option value="rating_desc">Top Matches</option>
+                    <option value="price_low">Price: Low to High</option>
+                </select>
+            </div>
+            <div id="products" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-6"></div>
+            <div class="text-center mt-12 mb-10"><button id="loadMoreBtn" onclick="renderNextBatch()" class="hidden px-10 py-3 bg-amazon-orange text-black rounded-full font-black text-xs uppercase hover:scale-105 transition shadow-lg">View More Picks</button></div>
+        </div>
+    </main>
+
+    <script>
+        let globalData = [], filteredData = [], displayedCount = 0;
+        let cart = [];
+        let catChart, priceChart;
+
+        function showToast(msg) {
+            const toast = document.createElement("div");
+            toast.className = "toast-msg";
+            toast.innerHTML = msg;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 2000);
+        }
+
+        function toggleCart() { document.getElementById('cartSidebar').classList.toggle('open'); }
+
+        function updateView() {
+            const loader = document.getElementById('loader');
+            loader.style.display = 'flex';
+            loader.classList.remove('fade-out');
+            
+            let uid = document.getElementById("userSelect").value;
+            fetch(`/api/recommendations?user_id=${uid}`).then(res => res.json()).then(data => {
+                globalData = data;
+                document.getElementById("statProducts").innerText = data.length;
+                
+                let avgVal = data.length > 0 ? (data.reduce((a,b)=>a+b.rating,0)/data.length) : 0;
+                document.getElementById("statAvgRating").innerText = avgVal.toFixed(2);
+                document.getElementById("insightAvg").innerText = avgVal.toFixed(2);
+                
+                // --- PROGRESS BAR FIX ---
+                // Since your scores can be around 11.18, we divide by 15 to keep it in range.
+                let maxPossible = 15; 
+                let widthPercent = Math.min((avgVal / maxPossible) * 100, 100);
+                
+                const bar = document.getElementById("insightBar");
+                bar.style.transition = 'none';
+                bar.style.width = "0%"; 
+                
+                setTimeout(() => {
+                    bar.style.transition = 'width 1.5s cubic-bezier(0.65, 0, 0.35, 1)';
+                    bar.style.width = widthPercent + "%";
+                }, 50);
+                
+                renderCharts();
+                applyFilters();
+                setTimeout(() => { loader.classList.add('fade-out'); }, 500);
+            });
+        }
+
+        function applyFilters() {
+            displayedCount = 0;
+            document.getElementById("products").innerHTML = "";
+            let cat = document.getElementById("searchCategory").value;
+            let text = document.getElementById("search").value.toLowerCase();
+            let sort = document.getElementById("sortGrid").value;
+
+            filteredData = globalData.filter(x => (cat === 'All' || x.category === cat) && x.product_name.toLowerCase().includes(text));
+            
+            if(sort === 'rating_desc') filteredData.sort((a,b) => b.rating - a.rating);
+            if(sort === 'price_low') filteredData.sort((a,b) => a.price - b.price);
+
+            renderNextBatch();
+        }
+
+        function renderNextBatch() {
+            let container = document.getElementById("products");
+            let batch = filteredData.slice(displayedCount, displayedCount + 15);
+            
+            batch.forEach(item => {
+                let icon = item.category === 'Electronics' ? '💻' : '🏠';
+                let div = document.createElement("div");
+                div.className = "bg-gray-800 border border-gray-700 rounded-2xl overflow-hidden shadow-lg hover:border-amazon-orange transition flex flex-col group";
+                div.innerHTML = `
+                <div class="h-32 bg-gray-900 flex items-center justify-center border-b border-gray-700 text-5xl">${icon}</div>
+                <div class="p-4 flex-grow flex flex-col">
+                    <p class="text-[9px] font-black text-amazon-orange uppercase mb-1">${item.category}</p>
+                    <h4 class="text-[11px] font-bold mb-1 line-clamp-2 h-8 text-gray-200">${item.product_name}</h4>
+                    <p class="text-green-400 text-[9px] font-black mb-3 uppercase tracking-tighter">Amazon Match: ${item.rating.toFixed(2)}</p>
+                    <div class="mt-auto flex justify-between items-center">
+                        <span class="text-lg font-black italic">₹${item.price.toLocaleString('en-IN')}</span>
+                        <button onclick="addToCart('${item.product_name.replace(/'/g, "\\'")}', ${item.price})" class="bg-amazon-orange text-black px-3 py-1.5 rounded-lg text-[9px] font-black uppercase hover:scale-105 transition shadow-sm">Add 🛒</button>
+                    </div>
+                </div>`;
+                container.appendChild(div);
+            });
+            displayedCount += batch.length;
+            document.getElementById("loadMoreBtn").style.display = displayedCount < filteredData.length ? "inline-block" : "none";
+        }
+
+        function addToCart(name, price) {
+            const item = { id: Date.now() + Math.random(), name, price };
+            cart.push(item);
+            updateCartUI();
+            showToast("Added to Amazon Basket");
+        }
+
+        function removeFromCart(id) {
+            cart = cart.filter(item => item.id !== id);
+            updateCartUI();
+        }
+
+        function updateCartUI() {
+            document.getElementById('cartBadge').innerText = cart.length;
+            const list = document.getElementById('cartItemsList');
+            let total = cart.reduce((sum, item) => sum + item.price, 0);
+
+            if (cart.length === 0) {
+                list.innerHTML = `<p class="text-gray-500 text-center mt-10 text-xs uppercase font-bold italic">Basket is empty</p>`;
+            } else {
+                list.innerHTML = cart.map(item => `
+                    <div class="bg-gray-900 p-2 rounded border border-gray-700 flex justify-between items-center text-[10px]">
+                        <div class="flex flex-col truncate w-40">
+                            <span class="truncate font-bold">${item.name}</span>
+                            <span class="text-amazon-orange">₹${item.price.toLocaleString('en-IN')}</span>
+                        </div>
+                        <button onclick="removeFromCart(${item.id})" class="text-gray-500 hover:text-red-500 font-black px-2 transition">✕</button>
+                    </div>`).join('');
+            }
+            document.getElementById('cartTotal').innerText = `₹${total.toLocaleString('en-IN')}`;
+        }
+
+        function renderCharts() {
+            let cats = { Electronics: 0, Home: 0 };
+            globalData.forEach(i => { if(cats[i.category] !== undefined) cats[i.category]++; });
+            
+            if(catChart) catChart.destroy();
+            catChart = new Chart(document.getElementById('categoryChart'), {
+                type: 'doughnut',
+                data: { labels: ['Electronics', 'Home'], datasets: [{ data: [cats.Electronics, cats.Home], backgroundColor: ['#007185', '#febd69'], borderWidth: 0 }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { color: '#9ca3af', font: { size: 9 } } } } }
+            });
+
+            if(priceChart) priceChart.destroy();
+            priceChart = new Chart(document.getElementById('priceChart'), {
+                type: 'bar',
+                data: { labels: ['Electronics', 'Home'], datasets: [{ label: 'Price Dist', data: [12500, 8500], backgroundColor: '#febd69' }] },
+                options: { responsive: true, maintainAspectRatio: false, scales: { y: { display: false }, x: { ticks: { color: '#9ca3af', font: { size: 9 } } } }, plugins: { legend: { display: false } } }
+            });
+        }
+
+        fetch("/api/users").then(res => res.json()).then(list => {
+            let sel = document.getElementById("userSelect");
+            list.forEach(u => sel.add(new Option(`User: ${u}`, u)));
+            document.getElementById("statUsers").innerText = list.length;
+            if (list.length > 0) updateView();
+        });
+    </script>
+</body>
+</html>
